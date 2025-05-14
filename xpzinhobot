@@ -1,0 +1,148 @@
+import json
+import asyncio
+from telegram import Update, ChatMember
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+
+# Arquivos de dados
+ARQUIVO_USUARIOS = "usuarios.json"
+LIVRO_ATUAL = "livro_atual.txt"
+REUNIAO_ATUAL = "reuniao_atual.txt"
+
+# -------- Utilitários --------
+
+def carregar_usuarios():
+    try:
+        with open(ARQUIVO_USUARIOS, "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+def salvar_usuario(username):
+    usuarios = carregar_usuarios()
+    if username and username not in usuarios:
+        usuarios.append(username)
+        with open(ARQUIVO_USUARIOS, "w") as f:
+            json.dump(usuarios, f)
+
+def salvar_livro(texto):
+    with open(LIVRO_ATUAL, "w", encoding="utf-8") as f:
+        f.write(texto)
+
+def carregar_livro():
+    try:
+        with open(LIVRO_ATUAL, "r", encoding="utf-8") as f:
+            return f.read()
+    except:
+        return "Nenhum livro cadastrado no momento."
+
+def salvar_reuniao(texto):
+    with open(REUNIAO_ATUAL, "w", encoding="utf-8") as f:
+        f.write(texto)
+
+def carregar_reuniao():
+    try:
+        with open(REUNIAO_ATUAL, "r", encoding="utf-8") as f:
+            return f.read()
+    except:
+        return "Nenhuma reunião agendada ainda."
+
+async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    membro = await context.bot.get_chat_member(chat.id, user.id)
+    return membro.status in [ChatMember.ADMINISTRATOR, ChatMember.OWNER]
+
+# -------- Comandos --------
+
+# /xp
+async def xp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mensagem = (
+        "Bem-vindo ao XP da Leitura! "
+        "Use o comando /livroatual para ver o que estamos lendo e o comando /reuniao para ter acesso à data da nossa discussão."
+    )
+    await update.message.reply_text(mensagem)
+
+# /livroatual
+async def livro_atual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.effective_user.username
+    if username:
+        salvar_usuario("@" + username)
+
+    livro = carregar_livro()
+    await update.message.reply_text(f"Estamos lendo: {livro}")
+
+# /setlivro
+async def set_livro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        await update.message.reply_text("Apenas administradores podem usar esse comando.")
+        return
+
+    novo_livro = " ".join(context.args)
+    if not novo_livro:
+        await update.message.reply_text("Uso: /setlivro Nome do livro e autor")
+        return
+
+    salvar_livro(novo_livro)
+    await update.message.reply_text(f"Livro atualizado para:\n*{novo_livro}*", parse_mode="Markdown")
+
+# /reuniao
+async def reuniao(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = carregar_reuniao()
+    await update.message.reply_text(f"Próxima discussão:\n{texto}")
+
+# /setreuniao
+async def set_reuniao(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        await update.message.reply_text("Apenas administradores podem usar esse comando.")
+        return
+
+    nova_info = " ".join(context.args)
+    if not nova_info:
+        await update.message.reply_text("Uso: /setreuniao Dia, hora, link ou local")
+        return
+
+    salvar_reuniao(nova_info)
+    await update.message.reply_text(f"Informações da reunião atualizadas:\n*{nova_info}*", parse_mode="Markdown")
+
+# /convocar
+async def convocar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        await update.message.reply_text("Apenas administradores podem usar este comando.")
+        return
+
+    usuarios = carregar_usuarios()
+    if not usuarios:
+        await update.message.reply_text("Nenhum usuário registrado.")
+        return
+
+    usuarios = usuarios[:50]  # Limite de 50
+    for i in range(0, len(usuarios), 5):
+        grupo = usuarios[i:i+5]
+        texto = " ".join(grupo)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=texto)
+        await asyncio.sleep(1)
+
+# Boas-vindas automáticas
+async def boas_vindas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mensagem = (
+        "Bem-vindo ao XP da Leitura! "
+        "Use o comando /livroatual para ver o que estamos lendo e o comando /reuniao para ter acesso à data da nossa discussão."
+    )
+    for member in update.message.new_chat_members:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=mensagem)
+
+# -------- Inicialização --------
+
+if __name__ == '__main__':
+    app = ApplicationBuilder().token("7806827402:AAHJMk-GpXwvd58RicsKtUfEDhIE5E93dEY").build()
+
+    app.add_handler(CommandHandler("xp", xp))
+    app.add_handler(CommandHandler("livroatual", livro_atual))
+    app.add_handler(CommandHandler("setlivro", set_livro))
+    app.add_handler(CommandHandler("reuniao", reuniao))
+    app.add_handler(CommandHandler("setreuniao", set_reuniao))
+    app.add_handler(CommandHandler("convocar", convocar))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, boas_vindas))
+
+    print("Bot rodando...")
+    app.run_polling()

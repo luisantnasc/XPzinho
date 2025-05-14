@@ -1,148 +1,113 @@
-import json
-import asyncio
-from telegram import Update, ChatMember
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Arquivos de dados
-ARQUIVO_USUARIOS = "usuarios.json"
-LIVRO_ATUAL = "livro_atual.txt"
-REUNIAO_ATUAL = "reuniao_atual.txt"
+import os
+import logging
+from telegram import Update, ParseMode
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
-# -------- Utilitários --------
+from storage import (
+    carregar_usuarios,
+    salvar_usuario,
+    carregar_livro,
+    salvar_livro,
+    carregar_reuniao,
+    salvar_reuniao,
+)
+from utils import is_admin, chunk_list
 
-def carregar_usuarios():
-    try:
-        with open(ARQUIVO_USUARIOS, "r") as f:
-            return json.load(f)
-    except:
-        return []
+# Configuração de logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def salvar_usuario(username):
-    usuarios = carregar_usuarios()
-    if username and username not in usuarios:
-        usuarios.append(username)
-        with open(ARQUIVO_USUARIOS, "w") as f:
-            json.dump(usuarios, f)
-
-def salvar_livro(texto):
-    with open(LIVRO_ATUAL, "w", encoding="utf-8") as f:
-        f.write(texto)
-
-def carregar_livro():
-    try:
-        with open(LIVRO_ATUAL, "r", encoding="utf-8") as f:
-            return f.read()
-    except:
-        return "Nenhum livro cadastrado no momento."
-
-def salvar_reuniao(texto):
-    with open(REUNIAO_ATUAL, "w", encoding="utf-8") as f:
-        f.write(texto)
-
-def carregar_reuniao():
-    try:
-        with open(REUNIAO_ATUAL, "r", encoding="utf-8") as f:
-            return f.read()
-    except:
-        return "Nenhuma reunião agendada ainda."
-
-async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user = update.effective_user
-    membro = await context.bot.get_chat_member(chat.id, user.id)
-    return membro.status in [ChatMember.ADMINISTRATOR, ChatMember.OWNER]
-
-# -------- Comandos --------
-
-# /xp
-async def xp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def xp(update: Update, context: CallbackContext) -> None:
     mensagem = (
-        "Bem-vindo ao XP da Leitura! "
-        "Use o comando /livroatual para ver o que estamos lendo e o comando /reuniao para ter acesso à data da nossa discussão."
+        "📚 *Bem-vindo ao XP da Leitura!* 📚\n\n"
+        "Use o comando /livroatual para ver o que estamos lendo e "
+        "o comando /reuniao para ter acesso a data da nossa discussão."
     )
-    await update.message.reply_text(mensagem)
+    update.message.reply_text(mensagem, parse_mode=ParseMode.MARKDOWN)
 
-# /livroatual
-async def livro_atual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def livro_atual(update: Update, context: CallbackContext) -> None:
     username = update.effective_user.username
     if username:
         salvar_usuario("@" + username)
-
+    
     livro = carregar_livro()
-    await update.message.reply_text(f"Estamos lendo: {livro}")
+    update.message.reply_text(f"📖 *Estamos lendo:*\n{livro}", parse_mode=ParseMode.MARKDOWN)
 
-# /setlivro
-async def set_livro(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update, context):
-        await update.message.reply_text("Apenas administradores podem usar esse comando.")
+def set_livro(update: Update, context: CallbackContext) -> None:
+    if not is_admin(update, context):
+        update.message.reply_text("⚠️ Apenas administradores podem usar esse comando.")
         return
 
     novo_livro = " ".join(context.args)
     if not novo_livro:
-        await update.message.reply_text("Uso: /setlivro Nome do livro e autor")
+        update.message.reply_text("ℹ️ Uso: /setlivro Nome do livro e autor")
         return
 
     salvar_livro(novo_livro)
-    await update.message.reply_text(f"Livro atualizado para:\n*{novo_livro}*", parse_mode="Markdown")
+    update.message.reply_text(f"✅ Livro atualizado para:\n*{novo_livro}*", parse_mode=ParseMode.MARKDOWN)
 
-# /reuniao
-async def reuniao(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def reuniao(update: Update, context: CallbackContext) -> None:
     texto = carregar_reuniao()
-    await update.message.reply_text(f"Próxima discussão:\n{texto}")
+    update.message.reply_text(f"🗓️ *Próxima discussão:*\n{texto}", parse_mode=ParseMode.MARKDOWN)
 
-# /setreuniao
-async def set_reuniao(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update, context):
-        await update.message.reply_text("Apenas administradores podem usar esse comando.")
+def set_reuniao(update: Update, context: CallbackContext) -> None:
+    if not is_admin(update, context):
+        update.message.reply_text("⚠️ Apenas administradores podem usar esse comando.")
         return
 
     nova_info = " ".join(context.args)
     if not nova_info:
-        await update.message.reply_text("Uso: /setreuniao Dia, hora, link ou local")
+        update.message.reply_text("ℹ️ Uso: /setreuniao Dia, hora, link ou local")
         return
 
     salvar_reuniao(nova_info)
-    await update.message.reply_text(f"Informações da reunião atualizadas:\n*{nova_info}*", parse_mode="Markdown")
+    update.message.reply_text(f"✅ Informações da reunião atualizadas:\n*{nova_info}*", parse_mode=ParseMode.MARKDOWN)
 
-# /convocar
-async def convocar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update, context):
-        await update.message.reply_text("Apenas administradores podem usar este comando.")
+def convocar(update: Update, context: CallbackContext) -> None:
+    if not is_admin(update, context):
+        update.message.reply_text("⚠️ Apenas administradores podem usar este comando.")
         return
 
     usuarios = carregar_usuarios()
     if not usuarios:
-        await update.message.reply_text("Nenhum usuário registrado.")
+        update.message.reply_text("ℹ️ Nenhum usuário registrado.")
         return
 
-    usuarios = usuarios[:50]  # Limite de 50
-    for i in range(0, len(usuarios), 5):
-        grupo = usuarios[i:i+5]
-        texto = " ".join(grupo)
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=texto)
-        await asyncio.sleep(1)
+    update.message.reply_text("🔔 *Convocando todos os membros do clube:*", parse_mode=ParseMode.MARKDOWN)
+    
+    # Dividir em 5 grupos de até 4 usuários
+    for i in range(5):
+        start_idx = i * 4
+        end_idx = start_idx + 4
+        grupo = usuarios[start_idx:end_idx]
+        
+        if grupo:
+            texto = " ".join(grupo)
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=texto
+            )
 
-# Boas-vindas automáticas
-async def boas_vindas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mensagem = (
-        "Bem-vindo ao XP da Leitura! "
-        "Use o comando /livroatual para ver o que estamos lendo e o comando /reuniao para ter acesso à data da nossa discussão."
-    )
-    for member in update.message.new_chat_members:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=mensagem)
+def main() -> None:
+    TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
+    
+    updater = Updater(TOKEN)
+    dispatcher = updater.dispatcher
 
-# -------- Inicialização --------
+    # Registrando os comandos
+    dispatcher.add_handler(CommandHandler("start", xp))
+    dispatcher.add_handler(CommandHandler("xp", xp))
+    dispatcher.add_handler(CommandHandler("livroatual", livro_atual))
+    dispatcher.add_handler(CommandHandler("setlivro", set_livro))
+    dispatcher.add_handler(CommandHandler("reuniao", reuniao))
+    dispatcher.add_handler(CommandHandler("setreuniao", set_reuniao))
+    dispatcher.add_handler(CommandHandler("convocar", convocar))
+
+    # Iniciando o bot
+    updater.start_polling()
+    print("Bot iniciado com sucesso! Agora responderá aos comandos.")
+    updater.idle()
 
 if __name__ == '__main__':
-    app = ApplicationBuilder().token("7806827402:AAHJMk-GpXwvd58RicsKtUfEDhIE5E93dEY").build()
-
-    app.add_handler(CommandHandler("xp", xp))
-    app.add_handler(CommandHandler("livroatual", livro_atual))
-    app.add_handler(CommandHandler("setlivro", set_livro))
-    app.add_handler(CommandHandler("reuniao", reuniao))
-    app.add_handler(CommandHandler("setreuniao", set_reuniao))
-    app.add_handler(CommandHandler("convocar", convocar))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, boas_vindas))
-
-    print("Bot rodando...")
-    app.run_polling()
+    main()
